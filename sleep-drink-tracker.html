@@ -360,7 +360,11 @@ function computeStreak() {
   var lastEntry = state.records[last];
   var lastMs;
   if (lastEntry.drinkEndTime) {
-    lastMs = new Date(last + "T" + lastEntry.drinkEndTime + ":00").getTime();
+    var endDt = new Date(last + "T" + lastEntry.drinkEndTime + ":00");
+    if (parseInt(lastEntry.drinkEndTime.slice(0, 2)) < 6) {
+      endDt.setDate(endDt.getDate() + 1);
+    }
+    lastMs = endDt.getTime();
   } else {
     lastMs = new Date(last + "T23:59:00").getTime();
   }

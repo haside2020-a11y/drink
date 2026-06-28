@@ -481,9 +481,17 @@ function computeCalendarSummary() {
   if (allDrinkDates.length > 0) {
     var lastDs = allDrinkDates[allDrinkDates.length - 1];
     var lastEntry = state.records[lastDs];
-    var baseMs = lastEntry.drinkEndTime
-      ? new Date(lastDs + "T" + lastEntry.drinkEndTime + ":00").getTime()
-      : new Date(lastDs + "T23:59:00").getTime();
+    var baseMs;
+    if (lastEntry.drinkEndTime) {
+      var endDt = new Date(lastDs + "T" + lastEntry.drinkEndTime + ":00");
+      // 새벽 6시 이전이면 다음날 새벽으로 처리 (토요일 밤 → 일요일 새벽)
+      if (parseInt(lastEntry.drinkEndTime.slice(0, 2)) < 6) {
+        endDt.setDate(endDt.getDate() + 1);
+      }
+      baseMs = endDt.getTime();
+    } else {
+      baseMs = new Date(lastDs + "T23:59:00").getTime();
+    }
     var diffMs = Date.now() - baseMs;
     var totalMins = Math.floor(diffMs / 60000);
     timeSinceLastDrink = { days: Math.floor(totalMins / 1440), hours: Math.floor((totalMins % 1440) / 60), hasTime: !!lastEntry.drinkEndTime };
@@ -677,7 +685,7 @@ function buildModalHTML() {
     var grams = totalGrams(draft.drinks);
     drinkListHtml =
       '<div class="drink-list">' + rows +
-      '<div class="drink-total">총 알코올 약 ' + Math.round(grams) + 'g · ' + (sojuLabel(grams) || "소주 0병") + ' 상당</div></div>';
+      '<div class="drink-total">' + (sojuLabel(grams) || "소주 0병") + ' 상당</div></div>';
   }
 
   var drinkDetailHtml = "";
