@@ -44,6 +44,14 @@
   .legend { margin-top: 14px; font-size: 11px; color: var(--muted); display: flex; flex-wrap: wrap; align-items: center; gap: 6px; width: 100%; line-height: 1.5; }
   .legend .dot-drink { width: 7px; height: 7px; flex-shrink: 0; }
 
+  .cal-summary { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 14px; }
+  .cal-summary-card { background: var(--card); border: 1px solid var(--border); border-radius: 14px; padding: 12px 12px 10px; display: flex; flex-direction: column; gap: 4px; }
+  .cal-summary-card.full { grid-column: 1 / -1; flex-direction: row; align-items: center; justify-content: space-between; }
+  .cal-summary-label { font-size: 10.5px; color: var(--muted); line-height: 1.3; }
+  .cal-summary-value { font-size: 16px; font-weight: 700; }
+  .cal-summary-value.elapsed { color: var(--teal); }
+  .cal-summary-sub { font-size: 10.5px; color: var(--amber); margin-top: 1px; }
+
   .stats-view { padding-top: 8px; display: flex; flex-direction: column; align-items: center; }
   .streak-orb { width: 168px; height: 168px; border-radius: 50%; border: 2px solid var(--border); display: flex; flex-direction: column; align-items: center; justify-content: center; background: radial-gradient(circle at 50% 35%, rgba(255,255,255,0.04), transparent 70%); margin: 8px 0 22px; }
   .streak-num { font-size: 44px; font-weight: 800; line-height: 1; font-variant-numeric: tabular-nums; }
@@ -458,6 +466,80 @@ function computeSavings() {
   return { soberAll: soberAll, soberMonth: soberMonth, totalAmount: soberAll * reward, monthAmount: soberMonth * reward };
 }
 
+function computeCalendarSummary() {
+  var year = state.currentMonth.getFullYear();
+  var month = state.currentMonth.getMonth();
+  var daysInMonth = new Date(year, month + 1, 0).getDate();
+
+  // 1. 마지막 음주 후 경과시간
+  var allDrinkDates = Object.keys(state.records)
+    .filter(function(d) { return state.records[d].drank; })
+    .sort();
+  var timeSinceLastDrink = null;
+  if (allDrinkDates.length > 0) {
+    var lastDs = allDrinkDates[allDrinkDates.length - 1];
+    var diffMs = Date.now() - new Date(lastDs + "T00:00:00").getTime();
+    var diffHours = Math.floor(diffMs / 3600000);
+    timeSinceLastDrink = { days: Math.floor(diffHours / 24), hours: diffHours % 24 };
+  }
+
+  // 2. 현재 달 최대 연속 음주일
+  var maxConsec = 0, curConsec = 0;
+  for (var d = 1; d <= daysInMonth; d++) {
+    var ds = fmt(new Date(year, month, d));
+    if (state.records[ds] && state.records[ds].drank) {
+      curConsec++;
+      if (curConsec > maxConsec) maxConsec = curConsec;
+    } else {
+      curConsec = 0;
+    }
+  }
+
+  // 3. 현재 달 총 음주량
+  var monthGrams = 0;
+  for (var d2 = 1; d2 <= daysInMonth; d2++) {
+    var ds2 = fmt(new Date(year, month, d2));
+    var e = state.records[ds2];
+    if (e && e.drank) monthGrams += totalGrams(e.drinks);
+  }
+
+  return { timeSinceLastDrink: timeSinceLastDrink, maxConsec: maxConsec, monthGrams: monthGrams };
+}
+
+function buildCalendarSummaryHTML() {
+  var s = computeCalendarSummary();
+  var year = state.currentMonth.getFullYear();
+  var month = state.currentMonth.getMonth();
+
+  var t = s.timeSinceLastDrink;
+  var timeStr = t === null ? "기록 없음"
+    : t.days === 0 ? t.hours + "시간"
+    : t.days + "일 " + t.hours + "시간";
+
+  var consecStr = s.maxConsec > 0 ? s.maxConsec + "일" : "없음";
+
+  var gramsStr = s.monthGrams > 0 ? Math.round(s.monthGrams) + "g" : "0g";
+  var bottleStr = s.monthGrams > 0 ? sojuLabel(s.monthGrams) : null;
+
+  return (
+    '<div class="cal-summary">' +
+    '<div class="cal-summary-card full">' +
+    '<span class="cal-summary-label">마지막 음주 후 경과</span>' +
+    '<span class="cal-summary-value elapsed">' + timeStr + '</span>' +
+    '</div>' +
+    '<div class="cal-summary-card">' +
+    '<span class="cal-summary-label">이번 달 최대<br>연속 음주일</span>' +
+    '<span class="cal-summary-value">' + consecStr + '</span>' +
+    '</div>' +
+    '<div class="cal-summary-card">' +
+    '<span class="cal-summary-label">이번 달 총 음주량</span>' +
+    '<span class="cal-summary-value">' + gramsStr + '</span>' +
+    (bottleStr ? '<span class="cal-summary-sub">' + bottleStr + '</span>' : '') +
+    '</div>' +
+    '</div>'
+  );
+}
+
 function buildCalendarHTML() {
   var year = state.currentMonth.getFullYear(), month = state.currentMonth.getMonth();
   var firstDay = new Date(year, month, 1), startOffset = firstDay.getDay();
@@ -496,7 +578,8 @@ function buildCalendarHTML() {
     WEEKDAYS.map(function (w, i) { return '<span class="weekday' + (i === 0 ? " sun" : "") + '">' + w + '</span>'; }).join("") +
     '</div>' +
     '<div class="day-grid">' + cells + '</div>' +
-    '<p class="legend"><span class="dot-drink"></span><span>음주일 · 숫자는 소주 환산 병수 / 수면시간</span></p>'
+    '<p class="legend"><span class="dot-drink"></span><span>음주일 · 숫자는 소주 환산 병수 / 수면시간</span></p>' +
+    buildCalendarSummaryHTML()
   );
 }
 
