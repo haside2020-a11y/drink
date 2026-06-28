@@ -132,28 +132,62 @@
 <body>
 <div id="app"></div>
 
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script>
 "use strict";
 
-// ---------- storage (localStorage — 동기식, 항상 같은 브라우저/같은 출처에서 안정적으로 동작) ----------
+// ---------- Supabase 연결 ----------
+var SUPABASE_URL = "https://hgwvpbzrwfkehepassut.supabase.co";
+var SUPABASE_KEY = "sb_publishable_vPAn-WpGRutXeQ16U0mnbQ_FKkw-tXZ";
+var supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+// ---------- localStorage (오프라인 캐시 — 인터넷 끊겼을 때 마지막 저장본 보여주는 용도) ----------
 var REC_KEY = "sd_records_v1";
 var SET_KEY = "sd_settings_v1";
 
-function loadRecords() {
+function loadLocalRecords() {
   try { return JSON.parse(localStorage.getItem(REC_KEY) || "{}"); }
   catch (e) { return {}; }
 }
-function saveRecords(r) {
-  try { localStorage.setItem(REC_KEY, JSON.stringify(r)); return true; }
-  catch (e) { return false; }
-}
-function loadSettings() {
+function loadLocalSettings() {
   try { return Object.assign({ dailyReward: 10000 }, JSON.parse(localStorage.getItem(SET_KEY) || "{}")); }
   catch (e) { return { dailyReward: 10000 }; }
 }
-function saveSettings(s) {
-  try { localStorage.setItem(SET_KEY, JSON.stringify(s)); return true; }
-  catch (e) { return false; }
+function cacheLocally() {
+  try {
+    localStorage.setItem(REC_KEY, JSON.stringify(state.records));
+    localStorage.setItem(SET_KEY, JSON.stringify(state.settings));
+  } catch (e) {}
+}
+
+// ---------- Supabase 읽기/쓰기 ----------
+async function dbLoadAll() {
+  try {
+    var res = await supabase.from("drink_records").select("date, data");
+    if (res.error) throw res.error;
+    return res.data;
+  } catch (e) { console.error(e); return null; }
+}
+async function dbUpsert(dateKey, dataObj) {
+  try {
+    var sel = await supabase.from("drink_records").select("id").eq("date", dateKey).limit(1);
+    if (sel.error) throw sel.error;
+    if (sel.data && sel.data.length) {
+      var upd = await supabase.from("drink_records").update({ data: dataObj }).eq("id", sel.data[0].id);
+      if (upd.error) throw upd.error;
+    } else {
+      var ins = await supabase.from("drink_records").insert({ date: dateKey, data: dataObj });
+      if (ins.error) throw ins.error;
+    }
+    return true;
+  } catch (e) { console.error(e); return false; }
+}
+async function dbDelete(dateKey) {
+  try {
+    var res = await supabase.from("drink_records").delete().eq("date", dateKey);
+    if (res.error) throw res.error;
+    return true;
+  } catch (e) { console.error(e); return false; }
 }
 
 // ---------- date helpers ----------
@@ -218,8 +252,8 @@ function esc(s) {
 
 // ---------- global state ----------
 var state = {
-  records: loadRecords(),
-  settings: loadSettings(),
+  records: {},
+  settings: { dailyReward: 10000 },
   view: "calendar",
   currentMonth: new Date(),
   modalDate: null,
@@ -230,23 +264,63 @@ var state = {
   pickPresetLabel: "1잔",
   toast: null
 };
+var pendingRetry = null;
 
-function showToast(msg) {
+function showToast(msg, retryFn) {
   state.toast = msg;
+  pendingRetry = retryFn || null;
   renderHeader();
-  setTimeout(function () { state.toast = null; renderHeader(); }, 1600);
+  if (!retryFn) {
+    setTimeout(function () {
+      if (state.toast === msg) { state.toast = null; renderHeader(); }
+    }, 1600);
+  }
+}
+function retryNow() {
+  if (pendingRetry) { var fn = pendingRetry; pendingRetry = null; fn(); }
 }
 
 // ---------- persistence actions ----------
-function persistRecords() {
-  var ok = saveRecords(state.records);
-  showToast(ok ? "저장됨" : "저장 실패 — 기기 저장공간을 확인해주세요");
-  return ok;
+function persistRecord(dateKey) {
+  cacheLocally();
+  dbUpsert(dateKey, state.records[dateKey]).then(function (ok) {
+    showToast(ok ? "저장됨" : "저장 실패 · 탭해서 재시도", ok ? null : function () { persistRecord(dateKey); });
+  });
+}
+function persistDeleteDate(dateKey) {
+  cacheLocally();
+  dbDelete(dateKey).then(function (ok) {
+    showToast(ok ? "삭제됨" : "삭제 실패 · 탭해서 재시도", ok ? null : function () { persistDeleteDate(dateKey); });
+  });
 }
 function persistSettings() {
-  var ok = saveSettings(state.settings);
-  showToast(ok ? "저장됨" : "저장 실패");
-  return ok;
+  cacheLocally();
+  dbUpsert("__settings__", state.settings).then(function (ok) {
+    showToast(ok ? "저장됨" : "저장 실패 · 탭해서 재시도", ok ? null : function () { persistSettings(); });
+  });
+}
+
+// ---------- 초기 로딩 ----------
+async function initApp() {
+  document.getElementById("app").innerHTML =
+    '<div class="app-root"><div style="padding:80px 20px;text-align:center;color:#8B92A3">불러오는 중…</div></div>';
+  var rows = await dbLoadAll();
+  if (rows) {
+    var recs = {}, settings = { dailyReward: 10000 };
+    rows.forEach(function (row) {
+      if (row.date === "__settings__") settings = Object.assign(settings, row.data || {});
+      else recs[row.date] = row.data;
+    });
+    state.records = recs;
+    state.settings = settings;
+    cacheLocally();
+    renderAll();
+  } else {
+    state.records = loadLocalRecords();
+    state.settings = loadLocalSettings();
+    renderAll();
+    showToast("오프라인 · 마지막 저장본 표시 중");
+  }
 }
 
 // ---------- day modal actions ----------
@@ -261,14 +335,16 @@ function closeModal() {
   renderAll();
 }
 function saveDraft() {
-  state.records[state.modalDate] = state.draft;
-  persistRecords();
+  var ds = state.modalDate;
+  state.records[ds] = state.draft;
   closeModal();
+  persistRecord(ds);
 }
 function deleteDay() {
-  delete state.records[state.modalDate];
-  persistRecords();
+  var ds = state.modalDate;
+  delete state.records[ds];
   closeModal();
+  persistDeleteDate(ds);
 }
 function toggleDrank() {
   state.draft.drank = !state.draft.drank;
@@ -347,7 +423,9 @@ function renderHeader() {
   if (!el) return;
   el.innerHTML =
     '<span class="brand">\uD83C\uDF19 잠 &amp; 잔</span>' +
-    (state.toast ? '<span class="save-toast">' + esc(state.toast) + '</span>' : '<span></span>');
+    (state.toast
+      ? '<span class="save-toast"' + (pendingRetry ? ' onclick="retryNow()" style="text-decoration:underline;cursor:pointer"' : '') + '>' + esc(state.toast) + '</span>'
+      : '<span></span>');
 }
 
 function computeStreak() {
@@ -600,7 +678,7 @@ function renderAll() {
   renderModal();
 }
 
-renderAll();
+initApp();
 </script>
 </body>
 </html>
