@@ -131,6 +131,7 @@
   .time-input { background: var(--card); border: 1px solid var(--border); border-radius: 10px; color: var(--text); padding: 9px 10px; font-size: 14px; font-variant-numeric: tabular-nums; outline: none; }
   .sleep-preview { font-size: 11.5px; color: var(--teal); margin-bottom: 10px; min-height: 14px; }
 
+  .section-divider { width: 100%; height: 1px; background: var(--border); margin: 16px 0 14px; }
   .sheet-actions { display: flex; gap: 10px; margin-top: 6px; }
   .delete-btn, .save-btn { flex: 1; display: flex; align-items: center; justify-content: center; gap: 6px; padding: 12px; border-radius: 12px; font-size: 14px; font-weight: 700; border: none; }
   .delete-btn { background: rgba(226,151,75,0.12); color: var(--amber); }
@@ -243,7 +244,7 @@ function sojuEquivalent(grams) { return grams / SOJU_BOTTLE_GRAMS; }
 function sojuLabel(grams) { var eq = sojuEquivalent(grams); return eq > 0 ? "소주 " + eq.toFixed(1) + "병" : null; }
 function sojuGlassLabel(grams) { var eq = grams / SOJU_GLASS_GRAMS; return eq > 0 ? "소주 " + eq.toFixed(1) + "잔" : null; }
 
-function emptyDraft() { return { drank: false, drinks: [], sleepTime: "", wakeTime: "", memo: "" }; }
+function emptyDraft() { return { drank: false, drinks: [], drinkEndTime: "", sleepTime: "", wakeTime: "", memo: "" }; }
 
 function streakStyle(days) {
   if (days === null) return { ring: "#3A4150", glow: "rgba(58,65,80,0)", label: "#8B92A3" };
@@ -409,6 +410,7 @@ function updateSleepPreview() {
   var min = sleepMinutes(state.draft);
   el.textContent = min != null ? "수면시간: " + minutesToHourLabel(min) : "";
 }
+function onDrinkEndTimeInput(v) { state.draft.drinkEndTime = v; }
 function onMemoInput(v) { state.draft.memo = v; }
 
 function setView(v) { state.view = v; renderAll(); }
@@ -478,9 +480,13 @@ function computeCalendarSummary() {
   var timeSinceLastDrink = null;
   if (allDrinkDates.length > 0) {
     var lastDs = allDrinkDates[allDrinkDates.length - 1];
-    var diffMs = Date.now() - new Date(lastDs + "T00:00:00").getTime();
-    var diffHours = Math.floor(diffMs / 3600000);
-    timeSinceLastDrink = { days: Math.floor(diffHours / 24), hours: diffHours % 24 };
+    var lastEntry = state.records[lastDs];
+    var baseMs = lastEntry.drinkEndTime
+      ? new Date(lastDs + "T" + lastEntry.drinkEndTime + ":00").getTime()
+      : new Date(lastDs + "T23:59:00").getTime();
+    var diffMs = Date.now() - baseMs;
+    var totalMins = Math.floor(diffMs / 60000);
+    timeSinceLastDrink = { days: Math.floor(totalMins / 1440), hours: Math.floor((totalMins % 1440) / 60), hasTime: !!lastEntry.drinkEndTime };
   }
 
   // 2. 현재 달 최대 연속 음주일
@@ -513,13 +519,13 @@ function buildCalendarSummaryHTML() {
 
   var t = s.timeSinceLastDrink;
   var timeStr = t === null ? "기록 없음"
+    : t.days === 0 && t.hours === 0 ? "방금"
     : t.days === 0 ? t.hours + "시간"
     : t.days + "일 " + t.hours + "시간";
 
   var consecStr = s.maxConsec > 0 ? s.maxConsec + "일" : "없음";
 
-  var gramsStr = s.monthGrams > 0 ? Math.round(s.monthGrams) + "g" : "0g";
-  var bottleStr = s.monthGrams > 0 ? sojuLabel(s.monthGrams) : null;
+  var bottleStr = s.monthGrams > 0 ? (sojuLabel(s.monthGrams) || "0병") : "0병";
 
   return (
     '<div class="cal-summary">' +
@@ -533,8 +539,7 @@ function buildCalendarSummaryHTML() {
     '</div>' +
     '<div class="cal-summary-card">' +
     '<span class="cal-summary-label">이번 달 총 음주량</span>' +
-    '<span class="cal-summary-value">' + gramsStr + '</span>' +
-    (bottleStr ? '<span class="cal-summary-sub">' + bottleStr + '</span>' : '') +
+    '<span class="cal-summary-value">' + bottleStr + '</span>' +
     '</div>' +
     '</div>'
   );
@@ -717,6 +722,13 @@ function buildModalHTML() {
     '<div class="sheet-body">' +
     '<button class="drink-toggle' + (draft.drank ? " on" : "") + '" onclick="toggleDrank()">🍷 ' + (draft.drank ? "오늘 술 마심" : "오늘 안 마심") + '</button>' +
     drinkDetailHtml +
+    (draft.drank ? (
+      '<div class="time-row" style="margin-top:6px">' +
+      '<div class="time-field"><span class="field-label" style="color:var(--amber)">🍷 음주완료 시각</span>' +
+      '<input type="time" class="time-input" style="border-color:rgba(226,151,75,0.4)" value="' + esc(draft.drinkEndTime) + '" oninput="onDrinkEndTimeInput(this.value)" /></div>' +
+      '</div>'
+    ) : "") +
+    '<div class="section-divider"></div>' +
     '<div class="time-row">' +
     '<div class="time-field"><span class="field-label">🌙 취침</span>' +
     '<input type="time" class="time-input" value="' + esc(draft.sleepTime) + '" oninput="onSleepTimeInput(this.value)" /></div>' +
